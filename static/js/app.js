@@ -137,9 +137,12 @@ async function loadMe() {
 
 function renderUser() {
   if (!state.user) return;
-  $("#currentUserName").textContent = state.user.username || state.user.email;
-  $("#currentUserMeta").textContent = `${state.user.email} | ${getRoleLabel(state.user.role)}`;
-  $("#currentUserAvatar").textContent = initials(state.user.username || state.user.email);
+  const name = $("#currentUserName");
+  const meta = $("#currentUserMeta");
+  const avatar = $("#currentUserAvatar");
+  if (name) name.textContent = state.user.username || state.user.email;
+  if (meta) meta.textContent = `${state.user.email} | ${getRoleLabel(state.user.role)}`;
+  if (avatar) avatar.textContent = initials(state.user.username || state.user.email);
   $$(".admin-only").forEach((node) => node.classList.toggle("hidden", state.user.role !== "ADMIN"));
 }
 
