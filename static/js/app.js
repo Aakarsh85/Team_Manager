@@ -1,40 +1,65 @@
+const page = document.body.dataset.page;
 const state = {
   access: localStorage.getItem("accessToken"),
   refresh: localStorage.getItem("refreshToken"),
   user: null,
   projects: [],
-  refreshPromise: null, // Track refresh requests
+  tasks: [],
+  users: [],
+  dashboard: null,
+  refreshPromise: null,
 };
 
-const qs = (selector) => document.querySelector(selector);
-const authView = qs("#authView");
-const appView = qs("#appView");
-const message = qs("#message");
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 function notify(text) {
+  const message = $("#message");
+  if (!message) return;
   message.textContent = text;
   message.classList.add("show");
-  window.setTimeout(() => message.classList.remove("show"), 3500);
+  window.setTimeout(() => message.classList.remove("show"), 3600);
 }
 
-function decodeUser(token) {
-  if (!token) return null;
-  try {
-    const payload = token.split(".")[1];
-    // Fix base64url to base64
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(base64));
-  } catch {
-    return null;
-  }
+function initials(value) {
+  return String(value || "?")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "?";
+}
+
+function formatDate(value) {
+  if (!value) return "No due date";
+  const date = new Date(`${value}T00:00:00`);
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function isOverdue(task) {
+  if (!task.due_date || task.status === "DONE") return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return new Date(`${task.due_date}T00:00:00`) < today;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getRoleLabel(role) {
+  return role === "ADMIN" ? "Admin" : "Member";
 }
 
 async function refreshToken() {
   if (!state.refresh) return null;
-  
-  // Prevent multiple concurrent refresh requests
   if (state.refreshPromise) return state.refreshPromise;
-  
   state.refreshPromise = (async () => {
     try {
       const response = await fetch("/api/auth/refresh", {
@@ -42,319 +67,526 @@ async function refreshToken() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh: state.refresh }),
       });
-      
-      if (!response.ok) throw new Error("Refresh failed");
-      
+      if (!response.ok) {
+        logout(false);
+        throw new Error("Session expired. Please sign in again.");
+      }
       const data = await response.json();
       state.access = data.access;
       localStorage.setItem("accessToken", state.access);
-      state.user = decodeUser(state.access);
-      return data.access;
-    } catch (error) {
-      // Refresh failed - log out
-      logout();
-      throw error;
+      return state.access;
     } finally {
       state.refreshPromise = null;
     }
   })();
-  
   return state.refreshPromise;
 }
 
 async function api(path, options = {}) {
-  const makeRequest = async (token) => {
+  const request = async (token) => {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (token) headers.Authorization = `Bearer ${token}`;
-    
     const response = await fetch(path, { ...options, headers });
-    
-    // Handle empty responses gracefully
     const text = await response.text();
     let data = null;
     try {
       data = text ? JSON.parse(text) : null;
-    } catch (e) {
-      // Response isn't JSON
+    } catch {
+      data = text;
     }
-    
     return { response, data };
   };
-  
-  let { response, data } = await makeRequest(state.access);
-  
-  // If token expired, try to refresh
-  if (response.status === 401 && state.refresh) {
-    try {
-      const newToken = await refreshToken();
-      const retry = await makeRequest(newToken);
-      response = retry.response;
-      data = retry.data;
-    } catch (error) {
-      // Already logged out
-      throw new Error("Session expired. Please log in again.");
-    }
+
+  let result = await request(state.access);
+  if (result.response.status === 401 && state.refresh) {
+    const token = await refreshToken();
+    result = await request(token);
   }
-  
-  if (!response.ok) {
-    const detail = data?.detail || JSON.stringify(data) || response.statusText;
+  if (!result.response.ok) {
+    const detail = result.data?.detail || result.data?.non_field_errors?.join(", ") || JSON.stringify(result.data) || result.response.statusText;
     throw new Error(detail);
   }
-  
-  return data;
+  return result.data;
 }
 
 function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
-function setAuth(tokens) {
+function setTokens(tokens) {
   state.access = tokens.access;
   state.refresh = tokens.refresh;
-  state.user = decodeUser(tokens.access);
-  localStorage.setItem("accessToken", state.access);
-  localStorage.setItem("refreshToken", state.refresh);
-  renderShell();
+  localStorage.setItem("accessToken", tokens.access);
+  localStorage.setItem("refreshToken", tokens.refresh);
 }
 
-function logout() {
+function logout(redirect = true) {
   state.access = null;
   state.refresh = null;
   state.user = null;
-  state.refreshPromise = null;
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
-  renderShell();
+  if (redirect) window.location.href = "/login/";
 }
 
-function renderShell() {
-  const signedIn = Boolean(state.access);
-  authView.classList.toggle("hidden", signedIn);
-  appView.classList.toggle("hidden", !signedIn);
-  qs("#logoutBtn").classList.toggle("hidden", !signedIn);
-  qs("#userMeta").textContent = signedIn
-    ? `Signed in as ${state.user?.username || `user #${state.user?.user_id}`}`
-    : "Sign in to manage projects and tasks.";
-  if (signedIn) loadAll();
+async function loadMe() {
+  state.user = await api("/api/auth/me/");
+  renderUser();
+  return state.user;
 }
 
-function renderStats(data) {
-  qs("#stats").innerHTML = [
-    ["Total", data.total_tasks],
-    ["Completed", data.completed_tasks],
-    ["Pending", data.pending_tasks],
-    ["Overdue", data.overdue_tasks],
-  ]
-    .map(([label, value]) => `<div class="stat"><span>${label}</span><strong>${value}</strong></div>`)
+function renderUser() {
+  if (!state.user) return;
+  $("#currentUserName").textContent = state.user.username || state.user.email;
+  $("#currentUserMeta").textContent = `${state.user.email} | ${getRoleLabel(state.user.role)}`;
+  $("#currentUserAvatar").textContent = initials(state.user.username || state.user.email);
+  $$(".admin-only").forEach((node) => node.classList.toggle("hidden", state.user.role !== "ADMIN"));
+}
+
+async function loadCoreData() {
+  const [projects, tasks, dashboard, users] = await Promise.all([
+    api("/api/projects/"),
+    api("/api/tasks/"),
+    api("/api/dashboard/"),
+    api("/api/users/"),
+  ]);
+  state.projects = projects;
+  state.tasks = tasks;
+  state.dashboard = dashboard;
+  state.users = users;
+  populateProjectOptions();
+}
+
+function populateProjectOptions() {
+  const projectOptions = ['<option value="">Select project</option>']
+    .concat(state.projects.map((project) => `<option value="${project.id}">${escapeHtml(project.name)}</option>`))
+    .join("");
+  $$('select[name="project"]').forEach((select) => {
+    select.innerHTML = projectOptions;
+  });
+  const projectFilter = $("#projectFilter");
+  if (projectFilter) {
+    projectFilter.innerHTML = '<option value="">All projects</option>' + state.projects.map((project) => `<option value="${project.id}">${escapeHtml(project.name)}</option>`).join("");
+  }
+  populateAssigneeFilter();
+  populateTaskAssignees();
+}
+
+function projectById(id) {
+  return state.projects.find((project) => String(project.id) === String(id));
+}
+
+function taskProject(task) {
+  return task.project_detail || projectById(task.project) || {};
+}
+
+function populateTaskAssignees() {
+  const projectSelect = $('#taskForm select[name="project"]');
+  const assigneeSelect = $('#taskForm select[name="assigned_to"]');
+  if (!projectSelect || !assigneeSelect) return;
+  const project = projectById(projectSelect.value);
+  const members = project?.members || [];
+  assigneeSelect.innerHTML = members.length
+    ? members.map((member) => `<option value="${member.user.id}">${escapeHtml(member.user.username)} (${escapeHtml(member.user.email)})</option>`).join("")
+    : '<option value="">Select a project with members</option>';
+}
+
+function populateAssigneeFilter() {
+  const filter = $("#assigneeFilter");
+  if (!filter) return;
+  const seen = new Map();
+  state.tasks.forEach((task) => {
+    if (task.assigned_to_detail) seen.set(task.assigned_to_detail.id, task.assigned_to_detail);
+  });
+  filter.innerHTML = '<option value="">All assignees</option><option value="me">Assigned to me</option>' + Array.from(seen.values())
+    .map((user) => `<option value="${user.id}">${escapeHtml(user.username)}</option>`)
     .join("");
 }
 
-function renderProjects(projects) {
-  state.projects = projects;
-  qs("#projects").innerHTML = projects.length
-    ? projects
-        .map(
-          (project) => `
-            <article class="item">
-              <strong>#${project.id} ${project.name}</strong>
-              <p class="meta">${project.description || "No description"}</p>
-              <p class="meta">${project.members.length} member(s)</p>
-              <button class="ghost" type="button" data-project="${project.id}">View members</button>
-            </article>
-          `,
-        )
-        .join("")
-    : '<p class="muted">No projects yet.</p>';
+function renderStats(container, items) {
+  if (!container) return;
+  container.innerHTML = items
+    .map(
+      (item) => `
+        <article class="stat-card ${item.danger ? "danger" : ""}">
+          <div class="label"><span>${escapeHtml(item.label)}</span><span class="material-symbols-outlined">${item.icon}</span></div>
+          <strong>${item.value}</strong>
+          ${item.note ? `<p class="muted">${escapeHtml(item.note)}</p>` : ""}
+        </article>
+      `,
+    )
+    .join("");
 }
 
-function renderMembers(projectId) {
-  const project = state.projects.find((item) => item.id === Number(projectId));
-  qs("#members").innerHTML = project
-    ? project.members
-        .map((member) => `
-          <div class="item">
-            <strong>#${member.user.id} ${member.user.username}</strong>
-            <p class="meta">${member.user.email} · ${member.role}</p>
-            <button class="ghost danger" type="button" data-remove-member="${member.user.id}" data-remove-project="${project.id}">Remove</button>
-          </div>
-        `)
-        .join("")
-    : '<p class="muted">Project not found.</p>';
-}
+function renderDashboard() {
+  renderStats($("#dashboardStats"), [
+    { label: "Total Tasks", value: state.dashboard.total_tasks, icon: "inventory_2" },
+    { label: "Completed", value: state.dashboard.completed_tasks, icon: "check_circle" },
+    { label: "Pending", value: state.dashboard.pending_tasks, icon: "schedule" },
+    { label: "Overdue", value: state.dashboard.overdue_tasks, icon: "warning", danger: state.dashboard.overdue_tasks > 0 },
+  ]);
 
-function renderTasks(tasks) {
-  qs("#tasks").innerHTML = tasks.length
+  const table = $("#myTasksTable");
+  const tasks = state.dashboard.assigned_tasks || [];
+  table.innerHTML = tasks.length
     ? tasks
         .map(
           (task) => `
-            <article class="task">
-              <div>
-                <h3>#${task.id} ${task.title}</h3>
-                <p>${task.description || ""}</p>
-                <p class="meta">Project #${task.project} · Assigned to ${task.assigned_to_detail?.username || task.assigned_to} · Due ${task.due_date}</p>
-                <span class="badge ${task.priority}">${task.priority}</span>
-              </div>
-              <div>
-                <span class="badge ${task.status}">${task.status.replace("_", " ")}</span>
-                <select data-task-status="${task.id}">
-                  <option value="TODO" ${task.status === "TODO" ? "selected" : ""}>To do</option>
-                  <option value="IN_PROGRESS" ${task.status === "IN_PROGRESS" ? "selected" : ""}>In progress</option>
-                  <option value="DONE" ${task.status === "DONE" ? "selected" : ""}>Done</option>
-                </select>
-                <button class="ghost danger" type="button" data-delete-task="${task.id}">Delete</button>
-              </div>
-            </article>
+            <tr>
+              <td><strong>${escapeHtml(task.title)}</strong><p class="muted">${escapeHtml(task.description || "No description")}</p></td>
+              <td>${escapeHtml(task.project_name || taskProject(task).name || "Project")}</td>
+              <td><span class="badge ${task.priority}">${task.priority}</span></td>
+              <td>${formatDate(task.due_date)}</td>
+              <td><span class="badge ${task.status}">${task.status.replace("_", " ")}</span></td>
+            </tr>
           `,
         )
         .join("")
-    : '<p class="muted">No tasks match the current filters.</p>';
+    : '<tr><td colspan="5" class="muted">No tasks are assigned to you yet.</td></tr>';
+
+  const active = $("#activeProjects");
+  const projects = state.dashboard.active_projects || [];
+  active.innerHTML = projects.length
+    ? projects
+        .slice(0, 5)
+        .map(
+          (project) => `
+            <div class="compact-row">
+              <span class="project-initials">${initials(project.name)}</span>
+              <div><strong>${escapeHtml(project.name)}</strong><p class="muted">${project.completion}% complete | ${project.task_count} task(s)</p></div>
+              <div class="progress"><span style="width:${project.completion}%"></span></div>
+            </div>
+          `,
+        )
+        .join("")
+    : '<p class="muted">No active projects yet.</p>';
 }
 
-async function loadDashboard() {
-  renderStats(await api("/api/dashboard/"));
+function renderProjects() {
+  const memberIds = new Set();
+  state.projects.forEach((project) => project.members.forEach((member) => memberIds.add(member.user.id)));
+  renderStats($("#projectStats"), [
+    { label: "Active Projects", value: state.projects.filter((project) => project.status !== "COMPLETED").length, icon: "folder" },
+    { label: "Completed", value: state.projects.filter((project) => project.status === "COMPLETED").length, icon: "check_circle" },
+    { label: "Total Members", value: memberIds.size, icon: "group" },
+    { label: "Overdue Tasks", value: state.projects.reduce((sum, project) => sum + project.overdue_task_count, 0), icon: "warning", danger: state.projects.some((project) => project.overdue_task_count > 0) },
+  ]);
+
+  const grid = $("#projectGrid");
+  grid.innerHTML = state.projects.length
+    ? state.projects
+        .map((project) => {
+          const statusLabel = project.status.replace("_", " ");
+          const removable = state.user.role === "ADMIN";
+          return `
+            <article class="project-card status-${project.status} ${project.overdue_task_count ? "has-overdue" : ""}">
+              <div class="card-head">
+                <span class="badge ${project.status}">${statusLabel}</span>
+                ${project.overdue_task_count ? `<span class="badge overdue">${project.overdue_task_count} overdue</span>` : ""}
+              </div>
+              <div>
+                <h2>${escapeHtml(project.name)}</h2>
+                <p class="muted">${escapeHtml(project.description || "No description")}</p>
+              </div>
+              <div>
+                <p class="muted">Created by ${escapeHtml(project.created_by?.username || project.created_by?.email || "Unknown")}</p>
+                <p class="muted">${project.task_count} task(s) | ${project.completion}% complete</p>
+              </div>
+              <div class="progress"><span style="width:${project.completion}%"></span></div>
+              <div class="member-stack" title="${project.members.length} member(s)">
+                ${project.members.slice(0, 5).map((member) => `<span class="member-avatar">${initials(member.user.username || member.user.email)}</span>`).join("")}
+                ${project.members.length > 5 ? `<span class="member-avatar">+${project.members.length - 5}</span>` : ""}
+              </div>
+              <div class="card-actions">
+                <button class="secondary-action admin-only" type="button" data-add-member="${project.id}"><span class="material-symbols-outlined">person_add</span>Add Member</button>
+                ${removable ? project.members.filter((member) => member.user.id !== state.user.id).map((member) => `<button class="plain-link admin-only" type="button" data-remove-member="${member.user.id}" data-project="${project.id}">Remove ${escapeHtml(member.user.username)}</button>`).join("") : ""}
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : emptyState("No projects yet", "Admins can create the first project to start assigning work.");
 }
 
-async function loadProjects() {
-  renderProjects(await api("/api/projects/"));
+function filteredTasks() {
+  const search = ($("#globalSearch")?.value || "").trim().toLowerCase();
+  const status = $("#statusFilter")?.value || "";
+  const priority = $("#priorityFilter")?.value || "";
+  const project = $("#projectFilter")?.value || "";
+  const assignee = $("#assigneeFilter")?.value || "";
+  return state.tasks.filter((task) => {
+    const haystack = `${task.title} ${task.description || ""} ${task.project_name || ""} ${task.assigned_to_detail?.username || ""}`.toLowerCase();
+    if (search && !haystack.includes(search)) return false;
+    if (status && task.status !== status) return false;
+    if (priority && task.priority !== priority) return false;
+    if (project && String(task.project) !== String(project)) return false;
+    if (assignee === "me" && task.assigned_to !== state.user.id) return false;
+    if (assignee && assignee !== "me" && String(task.assigned_to) !== String(assignee)) return false;
+    return true;
+  });
 }
 
-async function loadTasks() {
-  const params = new URLSearchParams();
-  const status = qs("#statusFilter").value;
-  const priority = qs("#priorityFilter").value;
-  const search = qs("#searchInput").value.trim();
-  if (status) params.set("status", status);
-  if (priority) params.set("priority", priority);
-  if (search) params.set("search", search);
-  const suffix = params.toString() ? `?${params}` : "";
-  renderTasks(await api(`/api/tasks/${suffix}`));
+function renderTasks() {
+  const board = $("#taskBoard");
+  if (!board) return;
+  const groups = [
+    ["TODO", "To do"],
+    ["IN_PROGRESS", "In progress"],
+    ["DONE", "Done"],
+  ];
+  const tasks = filteredTasks();
+  board.innerHTML = groups
+    .map(([status, label]) => {
+      const groupTasks = tasks.filter((task) => task.status === status);
+      return `
+        <section class="task-column">
+          <div class="column-title"><span>${label}</span><span>${groupTasks.length}</span></div>
+          ${groupTasks.length ? groupTasks.map(renderTaskCard).join("") : `<div class="panel empty-cta"><p class="muted">No ${label.toLowerCase()} tasks.</p></div>`}
+        </section>
+      `;
+    })
+    .join("");
 }
 
-async function loadAll() {
-  try {
-    await Promise.all([loadDashboard(), loadProjects(), loadTasks()]);
-  } catch (error) {
-    notify(error.message);
-  }
+function renderTaskCard(task) {
+  const assigned = task.assigned_to_detail || {};
+  const canUpdate = state.user.role === "ADMIN" || task.assigned_to === state.user.id;
+  const canDelete = state.user.role === "ADMIN";
+  return `
+    <article class="task-card status-${task.status} ${task.status === "DONE" ? "done" : ""} ${isOverdue(task) ? "is-overdue" : ""}">
+      <div class="card-head">
+        <span class="badge ${task.priority}">${task.priority}</span>
+        ${isOverdue(task) ? '<span class="badge overdue">Overdue</span>' : ""}
+      </div>
+      <div>
+        <h3>${escapeHtml(task.title)}</h3>
+        <p class="muted">${escapeHtml(task.description || "No description")}</p>
+      </div>
+      <div class="task-meta">
+        <span>Project: ${escapeHtml(task.project_name || taskProject(task).name || "Project")}</span>
+        <span>Assigned to: ${escapeHtml(assigned.username || assigned.email || "Unassigned")}</span>
+        <span>Due: ${formatDate(task.due_date)}</span>
+      </div>
+      <div class="task-footer">
+        ${canUpdate ? statusSelect(task) : `<span class="badge ${task.status}">${task.status.replace("_", " ")}</span>`}
+        ${canDelete ? `<button class="plain-link" type="button" data-delete-task="${task.id}"><span class="material-symbols-outlined">delete</span>Delete</button>` : ""}
+      </div>
+    </article>
+  `;
 }
 
-// Event handlers
-qs("#loginForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
+function statusSelect(task) {
+  return `
+    <select class="status-select" data-task-status="${task.id}">
+      <option value="TODO" ${task.status === "TODO" ? "selected" : ""}>To do</option>
+      <option value="IN_PROGRESS" ${task.status === "IN_PROGRESS" ? "selected" : ""}>In progress</option>
+      <option value="DONE" ${task.status === "DONE" ? "selected" : ""}>Done</option>
+    </select>
+  `;
+}
+
+function emptyState(title, detail) {
+  return `<div class="panel empty-cta"><h2>${escapeHtml(title)}</h2><p class="muted">${escapeHtml(detail)}</p></div>`;
+}
+
+function openModal(id) {
+  const modal = $(id);
+  if (modal?.showModal) modal.showModal();
+}
+
+function closeModals() {
+  $$("dialog[open]").forEach((dialog) => dialog.close());
+}
+
+function populateMemberModal(projectId) {
+  const project = projectById(projectId);
+  if (!project) return;
+  $('#memberForm input[name="project"]').value = project.id;
+  $("#memberProjectName").textContent = `Project: ${project.name}`;
+  const currentMembers = new Set(project.members.map((member) => member.user.id));
+  const choices = state.users.filter((user) => !currentMembers.has(user.id));
+  $('#memberForm select[name="user_id"]').innerHTML = choices.length
+    ? choices.map((user) => `<option value="${user.id}">${escapeHtml(user.username)} (${escapeHtml(user.email)})</option>`).join("")
+    : '<option value="">All known users are already members</option>';
+}
+
+async function refreshAll() {
+  await loadCoreData();
+  if (page === "dashboard") renderDashboard();
+  if (page === "projects") renderProjects();
+  if (page === "tasks") renderTasks();
+}
+
+async function initLogin() {
+  if (state.access) {
+    try {
+      await loadMe();
+      window.location.href = "/dashboard/";
+      return;
+    } catch {
+      logout(false);
+    }
+  }
+  $$("[data-auth-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      $$("[data-auth-tab]").forEach((node) => node.classList.toggle("active", node === tab));
+      $$("[data-auth-form]").forEach((form) => form.classList.toggle("hidden", form.dataset.authForm !== tab.dataset.authTab));
+    });
+  });
+  $("#loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const tokens = await api("/api/auth/login", { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
+      setTokens(tokens);
+      await loadMe();
+      window.location.href = "/dashboard/";
+    } catch (error) {
+      notify(error.message);
+    }
+  });
+  $("#signupForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const data = formData(event.currentTarget);
+      await api("/api/auth/signup", { method: "POST", body: JSON.stringify(data) });
+      const tokens = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email: data.email, password: data.password }) });
+      setTokens(tokens);
+      await loadMe();
+      window.location.href = "/dashboard/";
+    } catch (error) {
+      notify(error.message);
+    }
+  });
+}
+
+async function initApp() {
+  if (!state.access) {
+    window.location.href = "/login/";
+    return;
+  }
   try {
-    const data = formData(event.currentTarget);
-    setAuth(await api("/api/auth/login", { method: "POST", body: JSON.stringify(data) }));
-    notify("Logged in.");
+    await loadMe();
+    $$(".side-nav a").forEach((link) => link.classList.toggle("active", link.dataset.nav === page));
+    await refreshAll();
   } catch (error) {
     notify(error.message);
+    window.setTimeout(() => logout(), 900);
+    return;
   }
-});
 
-qs("#signupForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const data = formData(event.currentTarget);
-    await api("/api/auth/signup", { method: "POST", body: JSON.stringify(data) });
-    setAuth(await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email: data.email, password: data.password }) }));
-    notify("Account created.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
+  $("#logoutBtn")?.addEventListener("click", () => logout());
+  $("#refreshBtn")?.addEventListener("click", async () => {
+    await refreshAll();
+    notify("Data refreshed.");
+  });
+  $("#globalSearch")?.addEventListener("input", () => {
+    if (page === "tasks") renderTasks();
+  });
+  ["#statusFilter", "#priorityFilter", "#projectFilter", "#assigneeFilter"].forEach((selector) => {
+    $(selector)?.addEventListener("change", renderTasks);
+  });
+  $$("[data-open-project]").forEach((button) => button.addEventListener("click", () => openModal("#projectModal")));
+  $$("[data-open-task]").forEach((button) => button.addEventListener("click", () => openModal("#taskModal")));
+  $$("[data-close-modal]").forEach((button) => button.addEventListener("click", closeModals));
+  $('#taskForm select[name="project"]')?.addEventListener("change", populateTaskAssignees);
 
-qs("#projectForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    await api("/api/projects/", { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
-    event.currentTarget.reset();
-    await loadProjects();
-    notify("Project created.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
+  $("#projectForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/projects/", { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
+      event.currentTarget.reset();
+      closeModals();
+      await refreshAll();
+      notify("Project created.");
+    } catch (error) {
+      notify(error.message);
+    }
+  });
 
-qs("#memberForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const data = formData(event.currentTarget);
-    const project = data.project;
-    delete data.project;
-    data.user_id = Number(data.user_id);
-    await api(`/api/projects/${project}/add-member/`, { method: "POST", body: JSON.stringify(data) });
-    await loadProjects();
-    renderMembers(project);
-    notify("Member added.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
+  $("#memberForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const data = formData(event.currentTarget);
+      await api(`/api/projects/${data.project}/add-member/`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: Number(data.user_id), role: data.role }),
+      });
+      closeModals();
+      await refreshAll();
+      notify("Member added.");
+    } catch (error) {
+      notify(error.message);
+    }
+  });
 
-qs("#taskForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const data = formData(event.currentTarget);
-    data.project = Number(data.project);
-    data.assigned_to = Number(data.assigned_to);
-    await api("/api/tasks/", { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
-    await loadAll();
-    notify("Task created.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
+  $("#taskForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const data = formData(event.currentTarget);
+      await api("/api/tasks/", {
+        method: "POST",
+        body: JSON.stringify({
+          ...data,
+          project: Number(data.project),
+          assigned_to: Number(data.assigned_to),
+        }),
+      });
+      event.currentTarget.reset();
+      populateTaskAssignees();
+      closeModals();
+      await refreshAll();
+      notify("Task created.");
+    } catch (error) {
+      notify(error.message);
+    }
+  });
 
-qs("#projects").addEventListener("click", (event) => {
-  const projectId = event.target.dataset.project;
-  if (projectId) renderMembers(projectId);
-});
+  document.addEventListener("click", async (event) => {
+    const addMember = event.target.closest("[data-add-member]");
+    const removeMember = event.target.closest("[data-remove-member]");
+    const deleteTask = event.target.closest("[data-delete-task]");
+    if (addMember) {
+      populateMemberModal(addMember.dataset.addMember);
+      openModal("#memberModal");
+    }
+    if (removeMember) {
+      if (!confirm("Remove this member from the project?")) return;
+      try {
+        await api(`/api/projects/${removeMember.dataset.project}/remove-member/${removeMember.dataset.removeMember}/`, { method: "DELETE" });
+        await refreshAll();
+        notify("Member removed.");
+      } catch (error) {
+        notify(error.message);
+      }
+    }
+    if (deleteTask) {
+      if (!confirm("Delete this task? This cannot be undone.")) return;
+      try {
+        await api(`/api/tasks/${deleteTask.dataset.deleteTask}/`, { method: "DELETE" });
+        await refreshAll();
+        notify("Task deleted.");
+      } catch (error) {
+        notify(error.message);
+      }
+    }
+  });
 
-qs("#members").addEventListener("click", async (event) => {
-  const userId = event.target.dataset.removeMember;
-  const projectId = event.target.dataset.removeProject;
-  if (!userId || !projectId) return;
-  try {
-    // Updated URL pattern with user_id in path
-    await api(`/api/projects/${projectId}/remove-member/${userId}/`, { method: "DELETE" });
-    await loadProjects();
-    renderMembers(projectId);
-    notify("Member removed.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
+  document.addEventListener("change", async (event) => {
+    const select = event.target.closest("[data-task-status]");
+    if (!select) return;
+    try {
+      await api(`/api/tasks/${select.dataset.taskStatus}/`, { method: "PATCH", body: JSON.stringify({ status: select.value }) });
+      await refreshAll();
+      notify("Task updated.");
+    } catch (error) {
+      notify(error.message);
+      await refreshAll();
+    }
+  });
+}
 
-qs("#tasks").addEventListener("change", async (event) => {
-  const taskId = event.target.dataset.taskStatus;
-  if (!taskId) return;
-  try {
-    await api(`/api/tasks/${taskId}/`, { method: "PATCH", body: JSON.stringify({ status: event.target.value }) });
-    await loadAll();
-    notify("Task updated.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
-
-qs("#tasks").addEventListener("click", async (event) => {
-  const taskId = event.target.dataset.deleteTask;
-  if (!taskId) return;
-  if (!confirm("Delete this task? This cannot be undone.")) return;
-  try {
-    await api(`/api/tasks/${taskId}/`, { method: "DELETE" });
-    await loadAll();
-    notify("Task deleted.");
-  } catch (error) {
-    notify(error.message);
-  }
-});
-
-["#statusFilter", "#priorityFilter"].forEach((selector) => qs(selector).addEventListener("change", loadTasks));
-qs("#searchInput").addEventListener("input", () => window.clearTimeout(window.searchTimer) || (window.searchTimer = window.setTimeout(loadTasks, 250)));
-qs("#refreshBtn").addEventListener("click", loadAll);
-qs("#logoutBtn").addEventListener("click", logout);
-
-// Initialize
-state.user = decodeUser(state.access);
-renderShell();
+if (page === "login") {
+  initLogin();
+} else {
+  initApp();
+}

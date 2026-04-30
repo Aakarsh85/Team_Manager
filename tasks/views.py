@@ -128,15 +128,22 @@ class DashboardView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        user_tasks = Task.objects.filter(project__memberships__user=request.user).distinct()
-        assigned_tasks = user_tasks.filter(assigned_to=request.user).select_related("project", "assigned_to", "created_by")
+        accessible_tasks = Task.objects.filter(project__memberships__user=request.user).distinct()
+        assigned_tasks = accessible_tasks.filter(assigned_to=request.user).select_related("project", "assigned_to", "created_by")
+        active_projects = (
+            Project.objects.filter(memberships__user=request.user)
+            .select_related("created_by")
+            .prefetch_related("memberships__user", "tasks")
+            .distinct()
+        )
         today = timezone.localdate()
         data = {
-            "total_tasks": assigned_tasks.count(),
-            "completed_tasks": assigned_tasks.filter(status=Task.Status.DONE).count(),
-            "pending_tasks": assigned_tasks.exclude(status=Task.Status.DONE).count(),
-            "overdue_tasks": assigned_tasks.filter(due_date__lt=today).exclude(status=Task.Status.DONE).count(),
+            "total_tasks": accessible_tasks.count(),
+            "completed_tasks": accessible_tasks.filter(status=Task.Status.DONE).count(),
+            "pending_tasks": accessible_tasks.exclude(status=Task.Status.DONE).count(),
+            "overdue_tasks": accessible_tasks.filter(due_date__lt=today).exclude(status=Task.Status.DONE).count(),
             "assigned_tasks": assigned_tasks,
+            "active_projects": active_projects,
         }
         serializer = self.get_serializer(data)
         return response.Response(serializer.data)

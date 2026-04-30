@@ -1,119 +1,16 @@
-{% load static %}
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Team Task Manager</title>
-    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>Team Task Manager</h1>
-        <p id="userMeta">Sign in to manage projects and tasks.</p>
-      </div>
-      <button id="logoutBtn" class="ghost hidden" type="button">Logout</button>
-    </header>
-
-    <main>
-      <section id="authView" class="auth-grid">
-        <form id="loginForm" class="panel">
-          <h2>Login</h2>
-          <label>Email<input name="email" type="email" required autocomplete="email"></label>
-          <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
-          <button type="submit">Login</button>
-        </form>
-
-        <form id="signupForm" class="panel">
-          <h2>Signup</h2>
-          <label>Username<input name="username" required autocomplete="username"></label>
-          <label>Email<input name="email" type="email" required autocomplete="email"></label>
-          <label>Password<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
-          <label>Role
-            <select name="role">
-              <option value="MEMBER">Member</option>
-              <option value="ADMIN">Admin</option>
-            </select>
-          </label>
-          <button type="submit">Create account</button>
-        </form>
-      </section>
-
-      <section id="appView" class="hidden app-grid">
-        <section class="panel span-2">
-          <div class="section-head">
-            <h2>Dashboard</h2>
-            <button id="refreshBtn" class="ghost" type="button">Refresh</button>
-          </div>
-          <div id="stats" class="stats"></div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <h2>Projects</h2>
-          </div>
-          <form id="projectForm" class="stack">
-            <input name="name" placeholder="Project name" required>
-            <textarea name="description" placeholder="Description"></textarea>
-            <button type="submit">Create project</button>
-          </form>
-          <div id="projects" class="list"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Members</h2>
-          <form id="memberForm" class="stack">
-            <input name="project" type="number" placeholder="Project ID" required>
-            <input name="user_id" type="number" placeholder="User ID" required>
-            <select name="role">
-              <option value="MEMBER">Member</option>
-              <option value="ADMIN">Admin</option>
-            </select>
-            <button type="submit">Add member</button>
-          </form>
-          <div id="members" class="list muted">Select a project to view members.</div>
-        </section>
-
-        <section class="panel span-2">
-          <div class="section-head">
-            <h2>Tasks</h2>
-            <div class="filters">
-              <select id="statusFilter">
-                <option value="">All statuses</option>
-                <option value="TODO">To do</option>
-                <option value="IN_PROGRESS">In progress</option>
-                <option value="DONE">Done</option>
-              </select>
-              <select id="priorityFilter">
-                <option value="">All priorities</option>
-                <option value="LOW">Low</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HIGH">High</option>
-              </select>
-              <input id="searchInput" placeholder="Search tasks">
-            </div>
-          </div>
-          <form id="taskForm" class="task-form">
-            <input name="title" placeholder="Task title" required>
-            <input name="project" type="number" placeholder="Project ID" required>
-            <input name="assigned_to" type="number" placeholder="Assigned user ID" required>
-            <input name="due_date" type="date" required>
-            <select name="priority">
-              <option value="LOW">Low</option>
-              <option value="MEDIUM" selected>Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-            <textarea name="description" placeholder="Description"></textarea>
-            <button type="submit">Create task</button>
-          </form>
-          <div id="tasks" class="task-list"></div>
-        </section>
-      </section>
-
-      <div id="message" role="status"></div>
-    </main>
-
-    <script src="{% static 'js/app.js' %}"></script>
+    <script>
+      window.location.replace(localStorage.getItem("accessToken") ? "/dashboard/" : "/login/");
+    </script>
+    <noscript>
+      <a href="/login/">Continue to Team Task Manager</a>
+    </noscript>
   </body>
 </html>

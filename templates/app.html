@@ -1,0 +1,151 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Team Task Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+  </head>
+  <body class="app-page" data-page="{{ page }}">
+    <aside class="sidebar">
+      <a class="brand" href="/dashboard/">
+        <span class="brand-icon material-symbols-outlined">task_alt</span>
+        <span><strong>Team Task</strong><small>Manager</small></span>
+      </a>
+      <nav class="side-nav" aria-label="Main navigation">
+        <a href="/dashboard/" data-nav="dashboard"><span class="material-symbols-outlined">dashboard</span>Dashboard</a>
+        <a href="/projects/" data-nav="projects"><span class="material-symbols-outlined">folder</span>Projects</a>
+        <a href="/tasks/" data-nav="tasks"><span class="material-symbols-outlined">assignment</span>Tasks</a>
+      </nav>
+      <button class="primary-action admin-only" type="button" data-open-task>
+        <span class="material-symbols-outlined">add</span>New Task
+      </button>
+      <div class="sidebar-footer">
+        <button class="plain-link" type="button" id="logoutBtn"><span class="material-symbols-outlined">logout</span>Sign Out</button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="search-box">
+          <span class="material-symbols-outlined">search</span>
+          <input id="globalSearch" placeholder="Search tasks or projects..." autocomplete="off">
+        </div>
+        <div class="user-chip">
+          <div>
+            <strong id="currentUserName">Loading...</strong>
+            <span id="currentUserMeta"></span>
+          </div>
+          <span class="avatar" id="currentUserAvatar">?</span>
+        </div>
+      </header>
+
+      {% if page == "dashboard" %}
+      <section class="page-view" id="dashboardPage">
+        <div class="page-heading">
+          <div>
+            <h1>Overview</h1>
+            <p>Current project and task activity from your database.</p>
+          </div>
+          <button class="secondary-action" type="button" id="refreshBtn"><span class="material-symbols-outlined">refresh</span>Refresh</button>
+        </div>
+        <div id="dashboardStats" class="stat-grid"></div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>My Tasks</h2>
+            <a href="/tasks/">View All</a>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Title</th><th>Project</th><th>Priority</th><th>Due Date</th><th>Status</th></tr></thead>
+              <tbody id="myTasksTable"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="dashboard-grid">
+          <div class="panel">
+            <div class="panel-head"><h2>Active Projects</h2><a href="/projects/">Manage</a></div>
+            <div id="activeProjects" class="compact-list"></div>
+          </div>
+          <div class="panel empty-cta">
+            <span class="material-symbols-outlined">add_task</span>
+            <h2>Create a task</h2>
+            <p class="muted">Tasks use real projects and members from your database.</p>
+            <button class="primary-action admin-only" type="button" data-open-task>Create Task</button>
+          </div>
+        </section>
+      </section>
+      {% elif page == "projects" %}
+      <section class="page-view" id="projectsPage">
+        <div class="page-heading">
+          <div>
+            <h1>Projects</h1>
+            <p>Manage project membership and progress.</p>
+          </div>
+          <button class="primary-action admin-only" type="button" data-open-project><span class="material-symbols-outlined">add_circle</span>Create Project</button>
+        </div>
+        <div id="projectStats" class="stat-grid"></div>
+        <div id="projectGrid" class="project-grid"></div>
+      </section>
+      {% elif page == "tasks" %}
+      <section class="page-view" id="tasksPage">
+        <div class="page-heading">
+          <div>
+            <h1>Tasks</h1>
+            <p>Track work by status, priority, project, and assignee.</p>
+          </div>
+          <button class="primary-action admin-only" type="button" data-open-task><span class="material-symbols-outlined">add</span>New Task</button>
+        </div>
+        <div class="filter-bar">
+          <select id="statusFilter"><option value="">All statuses</option><option value="TODO">To do</option><option value="IN_PROGRESS">In progress</option><option value="DONE">Done</option></select>
+          <select id="priorityFilter"><option value="">All priorities</option><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option></select>
+          <select id="projectFilter"><option value="">All projects</option></select>
+          <select id="assigneeFilter"><option value="">All assignees</option><option value="me">Assigned to me</option></select>
+        </div>
+        <div id="taskBoard" class="task-board"></div>
+      </section>
+      {% endif %}
+    </main>
+
+    <dialog id="projectModal" class="modal">
+      <form id="projectForm" method="dialog" class="modal-card">
+        <div class="modal-head"><h2>Create Project</h2><button type="button" data-close-modal>&times;</button></div>
+        <label>Project name<input name="name" required></label>
+        <label>Description<textarea name="description"></textarea></label>
+        <button class="primary-action" type="submit">Create Project</button>
+      </form>
+    </dialog>
+
+    <dialog id="memberModal" class="modal">
+      <form id="memberForm" method="dialog" class="modal-card">
+        <div class="modal-head"><h2>Add Member</h2><button type="button" data-close-modal>&times;</button></div>
+        <input type="hidden" name="project">
+        <p class="muted" id="memberProjectName"></p>
+        <label>User<select name="user_id" required></select></label>
+        <label>Role<select name="role"><option value="MEMBER">Member</option><option value="ADMIN">Admin</option></select></label>
+        <button class="primary-action" type="submit">Add Member</button>
+      </form>
+    </dialog>
+
+    <dialog id="taskModal" class="modal">
+      <form id="taskForm" method="dialog" class="modal-card">
+        <div class="modal-head"><h2>Create Task</h2><button type="button" data-close-modal>&times;</button></div>
+        <label>Title<input name="title" required></label>
+        <label>Project<select name="project" required></select></label>
+        <label>Assign to<select name="assigned_to" required></select></label>
+        <label>Due date<input name="due_date" type="date" required></label>
+        <label>Priority<select name="priority"><option value="LOW">Low</option><option value="MEDIUM" selected>Medium</option><option value="HIGH">High</option></select></label>
+        <label>Description<textarea name="description"></textarea></label>
+        <button class="primary-action" type="submit">Create Task</button>
+      </form>
+    </dialog>
+
+    <div id="message" role="status"></div>
+    <script src="{% static 'js/app.js' %}"></script>
+  </body>
+</html>

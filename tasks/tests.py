@@ -46,3 +46,41 @@ class PermissionTests(APITestCase):
         )
         self.assertEqual(response.status_code, 201)
         self.assertTrue(ProjectMember.objects.filter(project=self.project, user=self.other).exists())
+
+    def test_me_endpoint_returns_current_user(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.get("/api/auth/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["email"], self.member.email)
+        self.assertEqual(response.data["role"], User.Role.MEMBER)
+
+    def test_users_endpoint_lists_users_for_admin(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get("/api/users/")
+        self.assertEqual(response.status_code, 200)
+        emails = {user["email"] for user in response.data}
+        self.assertIn(self.member.email, emails)
+        self.assertIn(self.other.email, emails)
+
+    def test_users_endpoint_limits_member_to_self(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.get("/api/users/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["email"], self.member.email)
+
+    def test_project_serializer_includes_member_and_task_summary(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(f"/api/projects/{self.project.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["task_count"], 1)
+        self.assertEqual(response.data["completion"], 0)
+        self.assertEqual(response.data["status"], "IN_PROGRESS")
+        self.assertEqual(len(response.data["members"]), 2)
+
+    def test_task_serializer_includes_project_details_for_dropdown_free_ui(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.get(f"/api/tasks/{self.task.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["project_name"], self.project.name)
+        self.assertEqual(response.data["project_detail"]["id"], self.project.id)

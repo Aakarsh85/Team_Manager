@@ -1,0 +1,69 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login | Team Task Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+  </head>
+  <body class="auth-page" data-page="login">
+    <main class="auth-shell">
+      <section class="auth-brand">
+        <div class="brand-mark">
+          <span class="material-symbols-outlined">hub</span>
+          <strong>Team Task Manager</strong>
+        </div>
+        <div class="auth-visual" aria-hidden="true">
+          <div class="visual-window">
+            <div></div><div></div><div></div>
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+        <div>
+          <h1>Keep projects, members, and tasks in one clear workspace.</h1>
+          <p>Sign in to see only the projects, members, and tasks your account can access.</p>
+        </div>
+      </section>
+
+      <section class="auth-panel">
+        <div class="auth-card">
+          <div class="auth-heading">
+            <h2>Welcome back</h2>
+            <p>Use your account details to continue.</p>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Authentication">
+            <button class="tab active" type="button" data-auth-tab="login">Sign In</button>
+            <button class="tab" type="button" data-auth-tab="signup">Register</button>
+          </div>
+
+          <form id="loginForm" class="auth-form" data-auth-form="login">
+            <label>Email Address<input name="email" type="email" placeholder="name@company.com" required autocomplete="email"></label>
+            <label>Password<input name="password" type="password" placeholder="Password" required autocomplete="current-password"></label>
+            <button class="primary-action" type="submit">Continue to Dashboard</button>
+          </form>
+
+          <form id="signupForm" class="auth-form hidden" data-auth-form="signup">
+            <label>Username<input name="username" placeholder="Your name" required autocomplete="username"></label>
+            <label>Email Address<input name="email" type="email" placeholder="name@company.com" required autocomplete="email"></label>
+            <label>Password<input name="password" type="password" minlength="8" placeholder="At least 8 characters" required autocomplete="new-password"></label>
+            <label>Role
+              <select name="role">
+                <option value="MEMBER">Member</option>
+                <option value="ADMIN">Admin</option>
+              </select>
+            </label>
+            <button class="primary-action" type="submit">Create Account</button>
+          </form>
+        </div>
+      </section>
+    </main>
+    <div id="message" role="status"></div>
+    <script src="{% static 'js/app.js' %}"></script>
+  </body>
+</html>
