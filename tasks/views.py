@@ -44,14 +44,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         )
         return response.Response(ProjectMemberSerializer(membership).data, status=status.HTTP_201_CREATED)
 
-    @decorators.action(detail=True, methods=["delete"], url_path="remove-member")
-    def remove_member(self, request, pk=None):
+    @decorators.action(detail=True, methods=["delete"], url_path="remove-member/(?P<user_id>[^/.]+)")
+    def remove_member(self, request, pk=None, user_id=None):
+        """Remove a member from the project. URL pattern: /api/projects/{id}/remove-member/{user_id}/"""
         project = self.get_object()
         if not is_project_admin(request.user, project):
             raise PermissionDenied("Only project admins can remove members.")
-        user_id = request.data.get("user_id") or request.query_params.get("user_id")
-        if not user_id:
-            return response.Response({"user_id": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Prevent removing yourself
+        if str(request.user.id) == user_id:
+            raise PermissionDenied("Project admins cannot remove themselves.")
+        
         deleted, _ = ProjectMember.objects.filter(project=project, user_id=user_id).delete()
         if not deleted:
             return response.Response({"detail": "Membership not found."}, status=status.HTTP_404_NOT_FOUND)

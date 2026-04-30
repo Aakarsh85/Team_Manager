@@ -3,6 +3,7 @@ const state = {
   refresh: localStorage.getItem("refreshToken"),
   user: null,
   projects: [],
+  refreshPromise: null, // Track refresh requests
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -19,22 +20,87 @@ function notify(text) {
 function decodeUser(token) {
   if (!token) return null;
   try {
-    return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const payload = token.split(".")[1];
+    // Fix base64url to base64
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(base64));
   } catch {
     return null;
   }
 }
 
+async function refreshToken() {
+  if (!state.refresh) return null;
+  
+  // Prevent multiple concurrent refresh requests
+  if (state.refreshPromise) return state.refreshPromise;
+  
+  state.refreshPromise = (async () => {
+    try {
+      const response = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh: state.refresh }),
+      });
+      
+      if (!response.ok) throw new Error("Refresh failed");
+      
+      const data = await response.json();
+      state.access = data.access;
+      localStorage.setItem("accessToken", state.access);
+      state.user = decodeUser(state.access);
+      return data.access;
+    } catch (error) {
+      // Refresh failed - log out
+      logout();
+      throw error;
+    } finally {
+      state.refreshPromise = null;
+    }
+  })();
+  
+  return state.refreshPromise;
+}
+
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (state.access) headers.Authorization = `Bearer ${state.access}`;
-  const response = await fetch(path, { ...options, headers });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const detail = data?.detail || JSON.stringify(data);
-    throw new Error(detail || "Request failed");
+  const makeRequest = async (token) => {
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    
+    const response = await fetch(path, { ...options, headers });
+    
+    // Handle empty responses gracefully
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (e) {
+      // Response isn't JSON
+    }
+    
+    return { response, data };
+  };
+  
+  let { response, data } = await makeRequest(state.access);
+  
+  // If token expired, try to refresh
+  if (response.status === 401 && state.refresh) {
+    try {
+      const newToken = await refreshToken();
+      const retry = await makeRequest(newToken);
+      response = retry.response;
+      data = retry.data;
+    } catch (error) {
+      // Already logged out
+      throw new Error("Session expired. Please log in again.");
+    }
   }
+  
+  if (!response.ok) {
+    const detail = data?.detail || JSON.stringify(data) || response.statusText;
+    throw new Error(detail);
+  }
+  
   return data;
 }
 
@@ -55,6 +121,7 @@ function logout() {
   state.access = null;
   state.refresh = null;
   state.user = null;
+  state.refreshPromise = null;
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
   renderShell();
@@ -66,7 +133,7 @@ function renderShell() {
   appView.classList.toggle("hidden", !signedIn);
   qs("#logoutBtn").classList.toggle("hidden", !signedIn);
   qs("#userMeta").textContent = signedIn
-    ? `Signed in as user #${state.user?.user_id || "unknown"}`
+    ? `Signed in as ${state.user?.username || `user #${state.user?.user_id}`}`
     : "Sign in to manage projects and tasks.";
   if (signedIn) loadAll();
 }
@@ -108,7 +175,7 @@ function renderMembers(projectId) {
           <div class="item">
             <strong>#${member.user.id} ${member.user.username}</strong>
             <p class="meta">${member.user.email} · ${member.role}</p>
-            <button class="ghost" type="button" data-remove-member="${member.user.id}" data-remove-project="${project.id}">Remove</button>
+            <button class="ghost danger" type="button" data-remove-member="${member.user.id}" data-remove-project="${project.id}">Remove</button>
           </div>
         `)
         .join("")
@@ -171,6 +238,7 @@ async function loadAll() {
   }
 }
 
+// Event handlers
 qs("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -247,7 +315,8 @@ qs("#members").addEventListener("click", async (event) => {
   const projectId = event.target.dataset.removeProject;
   if (!userId || !projectId) return;
   try {
-    await api(`/api/projects/${projectId}/remove-member/`, { method: "DELETE", body: JSON.stringify({ user_id: Number(userId) }) });
+    // Updated URL pattern with user_id in path
+    await api(`/api/projects/${projectId}/remove-member/${userId}/`, { method: "DELETE" });
     await loadProjects();
     renderMembers(projectId);
     notify("Member removed.");
@@ -271,6 +340,7 @@ qs("#tasks").addEventListener("change", async (event) => {
 qs("#tasks").addEventListener("click", async (event) => {
   const taskId = event.target.dataset.deleteTask;
   if (!taskId) return;
+  if (!confirm("Delete this task? This cannot be undone.")) return;
   try {
     await api(`/api/tasks/${taskId}/`, { method: "DELETE" });
     await loadAll();
@@ -285,5 +355,6 @@ qs("#searchInput").addEventListener("input", () => window.clearTimeout(window.se
 qs("#refreshBtn").addEventListener("click", loadAll);
 qs("#logoutBtn").addEventListener("click", logout);
 
+// Initialize
 state.user = decodeUser(state.access);
 renderShell();
