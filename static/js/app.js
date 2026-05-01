@@ -495,9 +495,10 @@ async function initApp() {
 
   $("#projectForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     try {
-      await api("/api/projects/", { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
-      event.currentTarget.reset();
+      await api("/api/projects/", { method: "POST", body: JSON.stringify(formData(form)) });
+      form.reset();
       closeModals();
       await refreshAll();
       notify("Project created.");
@@ -524,8 +525,9 @@ async function initApp() {
 
   $("#taskForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     try {
-      const data = formData(event.currentTarget);
+      const data = formData(form);
       await api("/api/tasks/", {
         method: "POST",
         body: JSON.stringify({
@@ -534,7 +536,7 @@ async function initApp() {
           assigned_to: Number(data.assigned_to),
         }),
       });
-      event.currentTarget.reset();
+      form.reset();
       populateTaskAssignees();
       closeModals();
       await refreshAll();
