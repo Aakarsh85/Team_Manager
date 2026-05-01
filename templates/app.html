@@ -113,7 +113,7 @@
     </main>
 
     <dialog id="projectModal" class="modal">
-      <form id="projectForm" method="dialog" class="modal-card">
+      <form id="projectForm" class="modal-card">
         <div class="modal-head"><h2>Create Project</h2><button type="button" data-close-modal>&times;</button></div>
         <label>Project name<input name="name" required></label>
         <label>Description<textarea name="description"></textarea></label>
@@ -122,7 +122,7 @@
     </dialog>
 
     <dialog id="memberModal" class="modal">
-      <form id="memberForm" method="dialog" class="modal-card">
+      <form id="memberForm" class="modal-card">
         <div class="modal-head"><h2>Add Member</h2><button type="button" data-close-modal>&times;</button></div>
         <input type="hidden" name="project">
         <p class="muted" id="memberProjectName"></p>
@@ -133,7 +133,7 @@
     </dialog>
 
     <dialog id="taskModal" class="modal">
-      <form id="taskForm" method="dialog" class="modal-card">
+      <form id="taskForm"  class="modal-card">
         <div class="modal-head"><h2>Create Task</h2><button type="button" data-close-modal>&times;</button></div>
         <label>Title<input name="title" required></label>
         <label>Project<select name="project" required></select></label>
