@@ -4,7 +4,7 @@ A full-stack task manager for teams, built with Django, Django REST Framework, J
 
 ## 🔗 Live Demo
 
-🌐 **Live:** web-production-676e.up.railway.app
+🌐 **Live:** https://web-production-676e.up.railway.app/login/
 
 📂 **Repository:** https://github.com/Aakarsh85/Team_Manager
 
